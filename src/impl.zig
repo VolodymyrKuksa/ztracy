@@ -59,33 +59,100 @@ pub const ZoneCtx = struct {
     }
 };
 
-inline fn initZone(comptime src: Src, name: ?[*:0]const u8, color: u32, depth: c_int) ZoneCtx {
+inline fn deanonimizeComptimeFunctionName(comptime name: [:0]const u8) [:0]const u8 {
+    const needle = "__anon_";
+
+    const idx = comptime std.mem.indexOf(u8, name, needle) orelse
+        return name;
+
+    const buf = comptime blk: {
+        var tmp: [idx:0]u8 = undefined;
+        for (0..idx) |i| {
+            tmp[i] = name[i];
+        }
+        break :blk tmp;
+    };
+    return &buf;
+}
+
+test deanonimizeComptimeFunctionName {
+    try std.testing.expectEqualStrings("foo", deanonimizeComptimeFunctionName("foo__anon_12345"));
+    try std.testing.expectEqualStrings("bar", deanonimizeComptimeFunctionName("bar"));
+}
+
+inline fn makeTracySourceLocationData(
+    comptime fn_name: [:0]const u8,
+    comptime file: [:0]const u8,
+    comptime line: u32,
+    name: ?[*:0]const u8,
+    color: u32,
+) *const c.___tracy_source_location_data {
     // Tracy uses pointer identity to identify contexts.
-    // The `src` parameter being comptime ensures that
+    // The `fn_name`, `file` and `line` parameters being comptime ensures that
     // each zone gets its own unique global location for this
     // struct.
     const static = struct {
-        var loc: c.___tracy_source_location_data = undefined;
+        var loc: c.___tracy_source_location_data = .{
+            .name = name,
+            .function = fn_name.ptr,
+            .file = file.ptr,
+            .line = line,
+            .color = color,
+        };
+    };
+    static.loc.name = name;
+    static.loc.color = color;
+    return &static.loc;
+}
 
-        // Ensure that a unique struct type is generated for each unique `src`. See
-        // https://github.com/ziglang/zig/issues/18816
-        comptime {
-            // https://github.com/ziglang/zig/issues/19274
-            _ = @sizeOf(@TypeOf(src));
-        }
-    };
-    static.loc = .{
-        .name = name,
-        .function = src.fn_name.ptr,
-        .file = src.file.ptr,
-        .line = src.line,
-        .color = color,
-    };
+test makeTracySourceLocationData {
+    try std.testing.expect(
+        @intFromPtr(makeTracySourceLocationData("foo", "bar", 42, "fn", 0xFF000000)) ==
+            @intFromPtr(makeTracySourceLocationData("foo", "bar", 42, "fn", 0xFF000000)),
+    );
+    try std.testing.expect(
+        @intFromPtr(makeTracySourceLocationData("foo", "bar", 42, "fn", 0xFF000000)) !=
+            @intFromPtr(makeTracySourceLocationData("baz", "bar", 42, "fn", 0xFF000000)),
+    );
+    try std.testing.expect(
+        @intFromPtr(makeTracySourceLocationData("foo", "bar", 42, "fn", 0xFF000000)) !=
+            @intFromPtr(makeTracySourceLocationData("foo", "baz", 42, "fn", 0xFF000000)),
+    );
+    try std.testing.expect(
+        @intFromPtr(makeTracySourceLocationData("foo", "bar", 42, "fn", 0xFF000000)) !=
+            @intFromPtr(makeTracySourceLocationData("foo", "bar", 21, "fn", 0xFF000000)),
+    );
+    try std.testing.expect(
+        @intFromPtr(makeTracySourceLocationData(
+            "foo",
+            deanonimizeComptimeFunctionName("bar__anon_12345"),
+            42,
+            "fn",
+            0xFF000000,
+        )) ==
+            @intFromPtr(makeTracySourceLocationData(
+                "foo",
+                deanonimizeComptimeFunctionName("bar__anon_23456"),
+                42,
+                "fn",
+                0xFF000000,
+            )),
+    );
+}
+
+inline fn initZone(comptime src: Src, name: ?[*:0]const u8, color: u32, depth: c_int) ZoneCtx {
+    const loc = makeTracySourceLocationData(
+        deanonimizeComptimeFunctionName(src.fn_name),
+        src.file,
+        src.line,
+        name,
+        color,
+    );
 
     const zone = if (has_callstack_support)
-        c.___tracy_emit_zone_begin_callstack(&static.loc, depth, 1)
+        c.___tracy_emit_zone_begin_callstack(loc, depth, 1)
     else
-        c.___tracy_emit_zone_begin(&static.loc, 1);
+        c.___tracy_emit_zone_begin(loc, 1);
 
     if (debug_verify_stack_order) {
         stack_depth += 1;
