@@ -72,6 +72,5 @@ pub const AppInfo = if (enabled) impl.AppInfo else stub.AppInfo;
 pub const TracyAllocator = if (enabled) impl.TracyAllocator else stub.TracyAllocator;
 
 test {
-    std.testing.refAllDecls(stub);
-    std.testing.refAllDecls(impl);
+    std.testing.refAllDecls(@This());
 }
