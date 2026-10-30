@@ -33,8 +33,9 @@ pub fn build(b: *std.Build) void {
     };
 
     const options_step = b.addOptions();
-    inline for (std.meta.fields(@TypeOf(options))) |field| {
-        options_step.addOption(field.type, field.name, @field(options, field.name));
+    const info = @typeInfo(@TypeOf(options)).@"struct";
+    inline for (info.field_names, info.field_types) |field_name, field_type| {
+        options_step.addOption(field_type, field_name, @field(options, field_name));
     }
 
     const options_module = options_step.createModule();
@@ -108,7 +109,7 @@ pub fn build(b: *std.Build) void {
         },
         .macos => {
             if (b.lazyDependency("system_sdk", .{})) |system_sdk| {
-                tracy.root_module.addFrameworkPath(system_sdk.path("System/Library/Frameworks"));
+                tracy.root_module.addFrameworkPath(system_sdk.path("macos12/System/Library/Frameworks"));
             }
         },
         else => {},
